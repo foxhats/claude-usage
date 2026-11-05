@@ -18,6 +18,10 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import MagicMock, patch
 
+from tests._pacemaker import requires_pacemaker
+
+pytestmark = requires_pacemaker
+
 # Add claude-usage src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

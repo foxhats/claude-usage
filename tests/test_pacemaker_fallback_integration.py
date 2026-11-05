@@ -11,6 +11,7 @@ Tests verify:
 - fallback_message included when in fallback
 """
 
+from tests._pacemaker import requires_pacemaker
 import json
 import sqlite3
 import time
@@ -142,6 +143,7 @@ class TestIsFallbackActive:
 
         assert reader.is_fallback_active() is False
 
+    @requires_pacemaker
     def test_returns_true_when_state_is_fallback(self, tmp_path):
         """is_fallback_active returns True when state is FALLBACK."""
         from claude_usage.code_mode.pacemaker_integration import PaceMakerReader

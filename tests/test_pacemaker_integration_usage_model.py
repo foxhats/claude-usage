@@ -32,6 +32,9 @@ from pathlib import Path
 from typing import Optional
 
 
+from tests._pacemaker import requires_pacemaker
+
+
 # Add claude-usage src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -135,6 +138,7 @@ def _make_reader(pm_dir: Path):
 # ---------------------------------------------------------------------------
 
 
+@requires_pacemaker
 class TestGetLatestUsageUsesUsageModel:
     """_get_latest_usage() must use UsageModel.get_current_usage() as its data source.
 
@@ -295,6 +299,7 @@ class TestGetLatestUsageUsesUsageModel:
         ), f"Missing keys: {required_keys - result.keys()}"
 
 
+@requires_pacemaker
 class TestIsFallbackActiveUsesUsageModel:
     """is_fallback_active() should delegate to UsageModel.is_fallback_active() (DB state).
 

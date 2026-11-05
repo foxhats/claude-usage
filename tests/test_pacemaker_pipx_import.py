@@ -1,5 +1,6 @@
 """Tests for pipx installation detection and import in pacemaker integration"""
 
+from tests._pacemaker import requires_pacemaker
 import unittest
 import tempfile
 import json
@@ -184,6 +185,7 @@ class TestPaceMakerPipxImport(unittest.TestCase):
             site_packages, "Should return None when site-packages not found"
         )
 
+    @requires_pacemaker
     def test_integration_pipx_import_with_mocked_venv(self):
         """Integration test: Import from pipx venv structure"""
         self._create_config(enabled=True)
@@ -300,6 +302,7 @@ class TestPaceMakerPipxImport(unittest.TestCase):
             self.assertIsNotNone(status)
             self.assertTrue(status.get("has_data", False))
 
+    @requires_pacemaker
     def test_import_error_handling_still_works(self):
         """Test that import errors are still caught and handled gracefully"""
         self._create_config(enabled=True)

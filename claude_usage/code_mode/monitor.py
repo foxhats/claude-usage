@@ -19,21 +19,35 @@ from claude_usage.shared.pacemaker_fetcher import fetch_pacemaker_bundle
 
 console = Console()
 
+TOKEN_EXPIRED_MESSAGE = "Token expired. Run 'claude' to refresh."
+
 
 class CodeMonitor:
     """Monitor Claude Code account usage via the discovered API"""
 
-    POLL_INTERVAL = 300  # seconds between API calls (5 minutes — same as pace-maker)
+    POLL_INTERVAL = 120  # seconds between API calls
+    SLOW_POLL_INTERVAL = 240  # used for the rest of the session after any error
     DISPLAY_REFRESH_INTERVAL = 1  # seconds between display refreshes
     CACHE_FRESHNESS_SECONDS = 360  # slightly above poll interval
     # ignore older pace-maker profile cache
     PROFILE_CACHE_MAX_AGE_SECONDS = 24 * 60 * 60
 
-    def __init__(self, credentials_path=None):
+    def __init__(self, credentials_path=None, style="btop"):
         if credentials_path is None:
             credentials_path = Path.home() / ".claude" / ".credentials.json"
 
         self.credentials_path = Path(credentials_path)
+        self.style = style
+        self.history = None  # btop history graph store, created on first use
+        self.last_poll_time = None
+
+        # Poll policy: every 2 min; after an error every 4 min; a 429 while
+        # already at 4 min stops the monitor with abort_report filled in.
+        self.poll_interval = self.POLL_INTERVAL
+        self.slowed_at = None
+        self.poll_log = [(datetime.now(), "started, polling every 2 min")]
+        self.successful_polls = 0
+        self.abort_report = None
         storage_dir = Path.home() / ".claude-usage"
         db_path = storage_dir / "usage_history.db"
 
@@ -166,8 +180,10 @@ class CodeMonitor:
     def fetch_usage(self):
         """Fetch usage data — heavyweight fallback with API call.
 
-        Called every POLL_INTERVAL (300s). When UsageModel is available,
-        _refresh_from_model() in the display loop provides data every cycle.
+        Called every `self.poll_interval` seconds (POLL_INTERVAL = 120, or
+        SLOW_POLL_INTERVAL = 240 after an error; see _on_poll_error). When
+        pace-maker's UsageModel is available, _refresh_from_model() provides
+        the data instead and no API request is made.
         """
         # Re-resolve credentials every cycle: the Claude account may have switched
         self._refresh_credentials()
@@ -183,8 +199,10 @@ class CodeMonitor:
         if not self.credentials:
             return False
 
-        # Still expired after the reload above - nothing usable
+        # Still expired after the reload above - nothing usable. Don't send a
+        # request we know will be rejected; tell the user how to fix it.
         if self.oauth_manager.is_token_expired(self.credentials):
+            self.error_message = TOKEN_EXPIRED_MESSAGE
             return False
 
         # Detect pace-maker backoff via UsageModel (SQLite — single source of truth)
@@ -216,29 +234,96 @@ class CodeMonitor:
             )
             return False
 
-        # Make API request
+        # Make API request (single attempt; errors handled by the poll policy)
         headers = self.oauth_manager.get_auth_headers(self.credentials)
-        usage_data, error = self.api_client.fetch_usage(headers)
+        usage_data, error = self.api_client.fetch_usage(headers, strict=True)
 
         if usage_data:
             self.last_usage = usage_data
             self.last_update = datetime.now()
             self.error_message = None
+            self.successful_polls = getattr(self, "successful_polls", 0) + 1
             return True
         else:
             self.error_message = error
+            self._on_poll_error(error)
             # Still return True if we have stale data — always show progress bars
             return self.last_usage is not None
+
+    def _on_poll_error(self, error):
+        """Slow to 4-min polling on the first error; abort on a 429 at 4 min."""
+        from .api import ApiError
+
+        detail = getattr(self.api_client, "last_error", None)
+        if not isinstance(detail, ApiError):
+            detail = None
+        now = datetime.now()
+        # tests may build the monitor without __init__
+        if not hasattr(self, "poll_log"):
+            self.poll_interval = self.POLL_INTERVAL
+            self.slowed_at = None
+            self.poll_log = []
+            self.abort_report = None
+        self.successful_polls = getattr(self, "successful_polls", 0)
+        if self.successful_polls:
+            self.poll_log.append((now, f"{self.successful_polls} successful poll(s)"))
+            self.successful_polls = 0
+
+        if self.poll_interval < self.SLOW_POLL_INTERVAL:
+            self.poll_interval = self.SLOW_POLL_INTERVAL
+            self.slowed_at = now
+            self.poll_log.append((now, f"poll failed: {error} -> switched to every 4 min"))
+            self.error_message = f"{error} · polling slowed to every 4 min"
+        elif detail is not None and detail.status == 429:
+            self.poll_log.append((now, f"poll failed: {error} -> stopped"))
+            self.abort_report = self._build_abort_report(detail)
+        else:
+            self.poll_log.append((now, f"poll failed: {error} (staying at every 4 min)"))
+            self.error_message = f"{error} · still polling every 4 min"
+
+    def _build_abort_report(self, detail):
+        """Plain-text report printed after the monitor stops on a 429."""
+        lines = [
+            "claude-usage stopped: the usage API rate limited it (HTTP 429)",
+            "while it was already polling every 4 minutes.",
+            "",
+            "What happened",
+        ]
+        for when, text in self.poll_log:
+            lines.append(f"  {when:%Y-%m-%d %H:%M:%S}  {text}")
+        lines += [
+            "",
+            "Last request",
+            f"  GET {detail.url}",
+            f"  status   {detail.status} {detail.reason}",
+            f"  time     {detail.when:%Y-%m-%d %H:%M:%S} (local)",
+        ]
+        if detail.elapsed is not None:
+            lines.append(f"  elapsed  {detail.elapsed:.2f}s")
+        lines += ["", "Response headers"]
+        for key, value in detail.headers.items():
+            if key.lower() == "set-cookie":
+                value = "<redacted>"
+            lines.append(f"  {key}: {value}")
+        lines += ["", "Response body"]
+        lines += ["  " + line for line in (detail.body or "(empty)").splitlines()]
+        return "\n".join(lines)
 
     def fetch_profile(self):
         """Fetch profile data from Claude Code API"""
         if not self.credentials:
             return False
 
-        headers = self.oauth_manager.get_auth_headers(self.credentials)
-        profile_data, org_uuid, account_uuid, error = self.api_client.fetch_profile(
-            headers
-        )
+        if self.oauth_manager.is_token_expired(self.credentials) is True:
+            # Known-dead token: skip the request (it would only return 401),
+            # but still let the profile cache below fill in if it can.
+            profile_data, org_uuid, account_uuid = None, None, None
+            error = TOKEN_EXPIRED_MESSAGE
+        else:
+            headers = self.oauth_manager.get_auth_headers(self.credentials)
+            profile_data, org_uuid, account_uuid, error = (
+                self.api_client.fetch_profile(headers)
+            )
 
         if profile_data:
             self.last_profile = profile_data
@@ -381,6 +466,87 @@ class CodeMonitor:
             scroll_offset=scroll_offset,
         )
 
+    def get_btop_display(self):
+        """Full-screen btop-style view (default style)."""
+        from .btop import Box, BtopView, UtilHistory
+
+        if self.history is None:
+            self.history = UtilHistory(self.storage.db_path)
+        self.history.record(self.last_usage, self.last_update)
+
+        pacemaker_status = None
+        extra_boxes = []
+        footer_keys = [("q", "quit")]
+        bundle = fetch_pacemaker_bundle(self.pacemaker_reader, include_weekly_limit=True)
+        if bundle is not None and bundle.pacemaker_status:
+            pacemaker_status = bundle.pacemaker_status
+            pacing = []
+            if bundle.activity_events is not None:
+                try:
+                    from .display import render_activity_line
+
+                    pacing.append(render_activity_line(bundle.activity_events))
+                except Exception as e:
+                    logging.debug("Activity line render failed: %s", e)
+            self.renderer._render_pacemaker(
+                pacing,
+                pacemaker_status,
+                self.last_usage,
+                pacemaker_status.get("weekly_limit_enabled", True),
+            )
+            pacing.append(
+                self.renderer.render_bottom_section(
+                    pacemaker_status,
+                    bundle.blockage_stats,
+                    self.last_update,
+                    langfuse_metrics=bundle.langfuse_metrics,
+                    secrets_metrics=bundle.secrets_metrics,
+                    panel_index=self.panel_index,
+                    agent_tree=self.pacemaker_reader.get_active_agent_tree_cached(),
+                )
+            )
+            extra_boxes.append(Box(5, "pace-maker", "#5c588d", pacing))
+            try:
+                events = self.pacemaker_reader.get_governance_events(window_seconds=3600)
+            except Exception as e:
+                logging.debug("Governance events fetch failed: %s", e)
+                events = []
+            if len(events) > self.prev_event_count and not self.user_scrolled:
+                self.scroll_offset = 0
+            self.prev_event_count = len(events)
+            if events:
+                try:
+                    width = os.get_terminal_size().columns
+                except (ValueError, OSError):
+                    width = 80
+                feed = self.renderer.render_event_feed(
+                    events, max(width - 4, 20), visible_lines=12,
+                    scroll_offset=self.scroll_offset,
+                )
+                extra_boxes.append(Box(6, "events", "#805252", [feed]))
+            footer_keys += [("↑↓", "scroll"), ("←→", "panel")]
+
+        next_poll_in = None
+        polling = None
+        if not self.pacemaker_reader.is_installed():
+            polling = (self.poll_interval, self.slowed_at)
+            if self.last_poll_time is not None:
+                next_poll_in = max(
+                    self.poll_interval - (time.time() - self.last_poll_time), 0
+                )
+
+        return BtopView(
+            usage=self.last_usage,
+            profile=self.last_profile,
+            error_message=self.error_message,
+            last_update=self.last_update,
+            history=self.history,
+            next_poll_in=next_poll_in,
+            polling=polling,
+            extra_boxes=extra_boxes,
+            footer_keys=footer_keys,
+        )
+
     def _start_key_listener(self):
         """Start a daemon thread for non-blocking keyboard input.
 
@@ -423,7 +589,7 @@ class CodeMonitor:
                 while True:
                     try:
                         ch = sys.stdin.read(1)
-                        if ch == "\x03":  # Ctrl+C
+                        if ch == "\x03" or (ch in "qQ" and self.style == "btop"):
                             key_queue.put("QUIT")
                             break
                         if ch == "\x1b":
@@ -496,12 +662,19 @@ class CodeMonitor:
         # Fetch usage immediately on startup
         self.fetch_usage()
         last_poll_time = time.time()
+        self.last_poll_time = last_poll_time
+        if self.abort_report:
+            return self._abort()
 
         # Start keyboard listener for event feed scrolling
         key_queue = self._start_key_listener()
 
         try:
-            with Live(refresh_per_second=1, console=console) as live:
+            btop = self.style == "btop"
+            render = self.get_btop_display if btop else self.get_display
+            with Live(
+                refresh_per_second=1, console=console, screen=btop
+            ) as live:
                 while True:
                     # Process keyboard input for scroll control
                     if key_queue:
@@ -516,12 +689,15 @@ class CodeMonitor:
 
                     # Check if it's time to poll the API (fallback for no UsageModel)
                     now = time.time()
-                    if now - last_poll_time >= self.POLL_INTERVAL:
+                    if now - last_poll_time >= self.poll_interval:
                         self.fetch_usage()
                         last_poll_time = now
+                        self.last_poll_time = now
+                        if self.abort_report:
+                            break
 
                     # Refresh display
-                    display = self.get_display()
+                    display = render()
                     live.update(display)
 
                     # Short sleep for responsive display
@@ -530,4 +706,11 @@ class CodeMonitor:
         except KeyboardInterrupt:
             return 0
 
+        if self.abort_report:
+            return self._abort()
         return 0
+
+    def _abort(self):
+        """Print the abort report on the normal screen (after Live exits)."""
+        print(self.abort_report, flush=True)
+        return 2

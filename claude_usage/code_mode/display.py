@@ -865,6 +865,35 @@ class UsageRenderer:
             padding = 1
         return f"{label}{' ' * padding}{markup_value}"
 
+    def _fmt_rules_breakdown(self, label, total, breakdown, width):
+        """Rule count with its "(defaults + custom - deleted)" breakdown.
+
+        One line when it fits in `width`. Otherwise the total stays on the
+        label line and the breakdown goes on a second, right-aligned line, so
+        the column never wraps mid-formula (e.g. "Danger Bash:" is too long a
+        label to share a 22-char line with "57 (55 + 3 - 1)").
+        """
+        custom = breakdown.get("custom", 0)
+        deleted = breakdown.get("deleted", 0)
+        defaults = total - custom + deleted
+        formula_plain = f"({defaults} + {custom} - {deleted})"
+        formula_markup = (
+            f"([green]{defaults}[/green]"
+            f" + [cyan]{custom}[/cyan]"
+            f" - [red]{deleted}[/red])"
+        )
+        one_line_plain = f"{total} {formula_plain}"
+        if len(label) + 1 + len(one_line_plain) <= width:
+            return self._fmt_kv(
+                label,
+                one_line_plain,
+                f"[green]{total}[/green] {formula_markup}",
+                width,
+            )
+        first = self._fmt_kv(label, str(total), f"[green]{total}[/green]", width)
+        indent = " " * max(width - len(formula_plain), 0)
+        return f"{first}\n{indent}{formula_markup}"
+
     def _truncate_blockage_label(self, label, value_str, width):
         """Return "label:", truncated with an ellipsis if it's long enough
         that "label:" + " " + value_str would overflow `width`.
@@ -1175,18 +1204,10 @@ class UsageRenderer:
         breakdown = pacemaker_status.get("clean_code_rules_breakdown")
         if rules_count > 0:
             if breakdown:
-                custom = breakdown.get("custom", 0)
-                deleted = breakdown.get("deleted", 0)
-                defaults = rules_count - custom + deleted
-                plain_val = f"{rules_count} ({defaults} + {custom} - {deleted})"
-                markup_val = (
-                    f"[green]{rules_count}[/green]"
-                    f" ([green]{defaults}[/green]"
-                    f" + [cyan]{custom}[/cyan]"
-                    f" - [red]{deleted}[/red])"
-                )
                 left_lines.append(
-                    self._fmt_kv("Rules:", plain_val, markup_val, status_col_width)
+                    self._fmt_rules_breakdown(
+                        "Rules:", rules_count, breakdown, status_col_width
+                    )
                 )
             else:
                 left_lines.append(
@@ -1207,18 +1228,10 @@ class UsageRenderer:
         db_breakdown = pacemaker_status.get("danger_bash_rules_breakdown")
         if db_count > 0:
             if db_breakdown:
-                db_custom = db_breakdown.get("custom", 0)
-                db_deleted = db_breakdown.get("deleted", 0)
-                db_defaults = db_count - db_custom + db_deleted
-                db_plain = f"{db_count} ({db_defaults} + {db_custom} - {db_deleted})"
-                db_markup = (
-                    f"[green]{db_count}[/green]"
-                    f" ([green]{db_defaults}[/green]"
-                    f" + [cyan]{db_custom}[/cyan]"
-                    f" - [red]{db_deleted}[/red])"
-                )
                 left_lines.append(
-                    self._fmt_kv("Danger Bash:", db_plain, db_markup, status_col_width)
+                    self._fmt_rules_breakdown(
+                        "Danger Bash:", db_count, db_breakdown, status_col_width
+                    )
                 )
             else:
                 left_lines.append(
@@ -1262,8 +1275,8 @@ class UsageRenderer:
             left_lines.append(
                 self._fmt_kv(
                     "Errors 24h:",
-                    "(log large)",
-                    "[yellow](log large)[/yellow]",
+                    "log large",
+                    "[yellow]log large[/yellow]",
                     status_col_width,
                 )
             )

@@ -102,6 +102,11 @@ def parse_args():
         "--version", action="version", version=f"claude-usage {__version__}"
     )
     parser.add_argument("--mode", default=None)
+    parser.add_argument(
+        "--classic",
+        action="store_true",
+        help="use the original layout instead of the btop-style screen",
+    )
     return parser.parse_args()
 
 
@@ -128,7 +133,9 @@ def main():
     else:
         from .code_mode.monitor import CodeMonitor
 
-        monitor = CodeMonitor(credentials_path)
+        monitor = CodeMonitor(
+            credentials_path, style="classic" if args.classic else "btop"
+        )
 
     # Run the monitor
     return monitor.run()

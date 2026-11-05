@@ -6,6 +6,7 @@ These tests verify that database connections are configured with:
 3. Proper context manager usage for connection lifecycle
 """
 
+from tests._pacemaker import requires_pacemaker
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -196,6 +197,7 @@ class TestPacemakerReaderConcurrency:
 
         return pm_dir
 
+    @requires_pacemaker
     def test_get_latest_usage_uses_timeout(self, mock_pm_dir, monkeypatch):
         """Test that _get_latest_usage() uses timeout parameter
 
@@ -239,6 +241,7 @@ class TestPacemakerReaderConcurrency:
                 else:
                     assert call_args.args[1] > 0
 
+    @requires_pacemaker
     def test_get_latest_usage_enables_wal(self, mock_pm_dir, monkeypatch):
         """Test that _get_latest_usage() enables WAL mode"""
         monkeypatch.setattr(Path, "home", lambda: mock_pm_dir.parent)

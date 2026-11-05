@@ -4,6 +4,7 @@ TDD: These tests define expected behavior. They will fail until implementation i
 """
 
 import time
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -292,6 +293,15 @@ class TestClaudeAPIClientFetchProfileBackoff(unittest.TestCase):
 class TestCodeMonitorPacemakerBackoff(unittest.TestCase):
     """Tests for CodeMonitor reading pace-maker backoff file."""
 
+    def setUp(self):
+        # These tests patch pacemaker.usage_model.UsageModel, so that module
+        # must be importable. Use a stand-in so they run without pace-maker.
+        from tests._pacemaker import fake_pacemaker_modules
+
+        modules = patch.dict(sys.modules, fake_pacemaker_modules())
+        modules.start()
+        self.addCleanup(modules.stop)
+
     def _make_monitor(self):
         """Create a CodeMonitor with all dependencies mocked."""
         with patch("claude_usage.code_mode.monitor.OAuthManager"), patch(
@@ -330,11 +340,12 @@ class TestCodeMonitorPacemakerBackoff(unittest.TestCase):
             }
             return monitor
 
-    def test_code_monitor_poll_interval_is_300_seconds(self):
-        """POLL_INTERVAL should be 300 seconds (5 minutes)."""
+    def test_code_monitor_poll_interval_is_2_then_4_minutes(self):
+        """Poll every 2 min; slow to 4 min after an error."""
         from claude_usage.code_mode.monitor import CodeMonitor
 
-        self.assertEqual(CodeMonitor.POLL_INTERVAL, 300)
+        self.assertEqual(CodeMonitor.POLL_INTERVAL, 120)
+        self.assertEqual(CodeMonitor.SLOW_POLL_INTERVAL, 240)
 
     def test_code_monitor_cache_freshness_is_360_seconds(self):
         """CACHE_FRESHNESS_SECONDS should be 360 seconds."""

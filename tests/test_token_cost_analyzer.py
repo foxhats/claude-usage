@@ -18,6 +18,9 @@ from datetime import datetime, timezone
 
 import pytest
 
+# The analyzer needs numpy, an optional extra: pip install '.[analyzer]'
+pytest.importorskip("numpy")
+
 # The module under test — will fail import until implementation exists
 from claude_usage.tools.token_cost_analyzer.core import (
     classify_model,

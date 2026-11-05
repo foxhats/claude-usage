@@ -138,6 +138,16 @@ Key functions: `format_action()`, `format_trail()`, `render_agent_line()`, `rend
 
 ---
 
+## btop view (fork)
+
+This repo is the btop-style fork. The default Code-mode screen is built in
+`claude_usage/code_mode/btop.py`, and the poll policy (2 min → 4 min after an
+error → stop on a 429) lives in `CodeMonitor._on_poll_error`. Read
+`docs/DEVELOPMENT.md` before changing either. Keep CRLF line endings in
+`claude_usage/*.py`.
+
+---
+
 ## Technologies
 
 - **Rich**: Terminal UI with progress bars and live updates

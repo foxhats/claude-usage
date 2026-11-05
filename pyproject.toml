@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-usage"
-version = "2.19.6"
-description = "Live-updating terminal dashboard for monitoring Claude Code account usage"
+version = "2.19.6+btop.1"
+description = "btop-style terminal dashboard for Claude Code plan usage (fork of LightspeedDMS/claude-usage)"
 readme = "README.md"
-requires-python = ">=3.6"
+requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
     {name = "jsbattig", email = "jsbattig@users.noreply.github.com"}
@@ -20,8 +20,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.6",
-    "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -37,10 +35,17 @@ dependencies = [
     "rich>=10.0.0",
 ]
 
+[project.optional-dependencies]
+# claude_usage/tools/token_cost_analyzer (not needed for the monitor itself)
+analyzer = ["numpy"]
+# everything needed to run the test suite
+test = ["pytest", "numpy"]
+
 [project.urls]
-Homepage = "https://github.com/LightspeedDMS/claude-usage"
-Repository = "https://github.com/LightspeedDMS/claude-usage"
-Issues = "https://github.com/LightspeedDMS/claude-usage/issues"
+Homepage = "https://github.com/foxhats/claude-usage"
+Repository = "https://github.com/foxhats/claude-usage"
+Upstream = "https://github.com/LightspeedDMS/claude-usage"
+Issues = "https://github.com/foxhats/claude-usage/issues"
 
 [project.scripts]
 claude-usage = "claude_usage.monitor:main"

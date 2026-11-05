@@ -5,6 +5,7 @@ behavior of stale data detection. The pacemaker module is available since
 both projects share the same development environment.
 """
 
+from tests._pacemaker import requires_pacemaker
 import unittest
 import tempfile
 import json
@@ -124,6 +125,7 @@ class TestPaceMakerReaderStaleData(unittest.TestCase):
         conn.commit()
         conn.close()
 
+    @requires_pacemaker
     def test_stale_data_flag_is_propagated_to_status(self):
         """Test that stale_data flag from pacing_engine is propagated to status"""
         self._create_config(enabled=True)

@@ -2,7 +2,33 @@
 
 import random
 import time
+from datetime import datetime
+
 import requests
+
+
+class ApiError:
+    """Everything known about one failed API request, for error reports."""
+
+    def __init__(self, url, status=None, reason="", headers=None, body="",
+                 exception=None, elapsed=None):
+        self.url = url
+        self.when = datetime.now()
+        self.status = status
+        self.reason = reason or ""
+        self.headers = dict(headers or {})
+        self.body = body or ""
+        self.exception = exception
+        self.elapsed = elapsed
+
+    def summary(self):
+        if self.status is None:
+            return f"Network error: {self.exception}"
+        text = f"HTTP {self.status} {self.reason}".strip()
+        if self.status == 401:
+            text += " (token expired, run 'claude' to refresh)"
+        return text
+
 
 
 class ClaudeAPIClient:
@@ -19,6 +45,7 @@ class ClaudeAPIClient:
     def __init__(self):
         self._consecutive_429s = 0
         self._backoff_until = 0.0
+        self.last_error = None  # ApiError from the last strict fetch_usage
 
     def is_in_backoff(self) -> bool:
         """Return True if currently in exponential backoff period."""
@@ -46,10 +73,17 @@ class ClaudeAPIClient:
         remaining = self._backoff_until - time.time()
         return max(remaining, 0.0)
 
-    def fetch_usage(self, auth_headers):
-        """Fetch current usage data from Claude Code API"""
+    def fetch_usage(self, auth_headers, strict=False):
+        """Fetch current usage data from Claude Code API
+
+        strict=True makes exactly one request: no in-call 429 retries and no
+        backoff bookkeeping. On failure `last_error` holds the full details.
+        The caller decides what to do about errors.
+        """
         if not auth_headers:
             return None, "No authentication headers"
+        if strict:
+            return self._fetch_usage_once(auth_headers)
 
         if self.is_in_backoff():
             remaining = self.get_backoff_remaining_seconds()
@@ -81,6 +115,37 @@ class ClaudeAPIClient:
                 return None, f"Network error: {e}"
 
         return None, "API rate limited (429) after retries"
+
+    def _fetch_usage_once(self, auth_headers):
+        url = f"{self.API_BASE}{self.USAGE_ENDPOINT}"
+        started = time.time()
+        try:
+            response = requests.get(url, headers=auth_headers, timeout=10)
+        except requests.exceptions.RequestException as e:
+            self.last_error = ApiError(
+                url, exception=repr(e), elapsed=time.time() - started
+            )
+            return None, self.last_error.summary()
+        if response.status_code == 200:
+            try:
+                data = response.json()
+            except ValueError as e:
+                self.last_error = ApiError(
+                    url, 200, response.reason, response.headers, response.text,
+                    exception=f"invalid JSON: {e}", elapsed=time.time() - started,
+                )
+                return None, "API returned invalid JSON"
+            self.last_error = None
+            return data, None
+        self.last_error = ApiError(
+            url,
+            response.status_code,
+            response.reason,
+            response.headers,
+            response.text,
+            elapsed=time.time() - started,
+        )
+        return None, self.last_error.summary()
 
     def fetch_profile(self, auth_headers):
         """Fetch profile data from Claude Code API"""

@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.19.6+btop.1] - 2026-11-05
+
+First release of the btop edition (fork of LightspeedDMS/claude-usage 2.19.6).
+
+### Added
+- **btop-style full-screen view, now the default** (`claude_usage/code_mode/btop.py`). It has numbered rounded boxes with notched titles, gradient `■` meters, btop's default colours, and an adaptive layout (side by side at 96+ columns, stacked below that). The original view is still available with `--classic`.
+- **24-hour history graph**: braille area graph with 5-hour usage growing up and 7-day usage hanging down. Samples are kept for 7 days in `~/.claude-usage/usage_history.db` (table `btop_util_history`), so the graph survives restarts. Gaps show when the monitor wasn't running.
+- **"% of window elapsed"** under each limit, to compare against "% used".
+- **`q` to quit** in the btop view (Ctrl+C still works).
+- **Diagnostic report on stop**: if the API rate-limits the monitor while it's already in slow mode, it exits with code 2 and prints the poll log, the last request's status, response headers (cookies redacted) and body.
+- `docs/DEVELOPMENT.md` (developer guide), `docs/make_screenshot.py` (regenerates the README screenshot from demo data).
+- Optional extras: `pip install '.[analyzer]'` (numpy, for `tools/token_cost_analyzer`) and `'.[test]'`.
+
+### Changed
+- **Poll policy**: one request every 2 minutes, with no hidden retries (`fetch_usage(strict=True)`). Any error slows polling to every 4 minutes for the rest of the session, and a 429 at 4 minutes stops the monitor (see above). Previously: every 5 minutes, with up to 3 requests and ~12 s of frozen screen per rate-limited poll.
+- Errors show in a red box with the HTTP status and reason (`ApiError` in `code_mode/api.py`).
+- Requires Python 3.8+.
+
+### Fixed
+- **Expired login**: with a locally expired token, the monitor no longer sends a profile request it knows will be rejected, and it now says "Token expired. Run 'claude' to refresh." instead of "API error: 401". The pace-maker profile cache is still used as a fallback.
+- **Pace-maker settings panel wrapping**: `Danger Bash: 57 (55 + 3 - 1)` and `Errors 24h: (log large)` overflowed the 22-column panel and wrapped mid-value. Long breakdowns now move to their own aligned line, and "log large" lost its brackets so it fits.
+- **Test suite**: all 26 tests that failed on a clean upstream checkout now pass or skip with a reason. Tests that need the real Claude Pace Maker package are marked `@requires_pacemaker` and skip when it isn't installed. The pace-maker backoff tests use a stand-in module, and analyzer tests skip without numpy. No test touches the network any more (the expired-token tests used to make a real request).
+
 ## [2.19.6] - 2026-10-15
 
 ### Fixed
